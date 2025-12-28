@@ -2,6 +2,8 @@ import streamlit as st
 import os
 import time
 import tempfile
+import cv2
+from PIL import Image
 import yt_dlp
 import google.generativeai as genai
 
@@ -9,17 +11,15 @@ import google.generativeai as genai
 # ⚙️ הגדרות עמוד
 # -------------------------------------------------
 st.set_page_config(
-    page_title="🏀 ניתוח שיפוט כדורסל – Gemini",
-    page_icon="🏀",
+    page_title="🏀 ניתוח שיפוט כדורסל – Hybrid AI",
     layout="wide"
 )
 
-st.title("🏀 ניתוח שיפוט כדורסל מקצועי (FIBA)")
+st.title("🏀 ניתוח שיפוט כדורסל מקצועי (Hybrid AI)")
 st.markdown(
     """
-    **הערה חשובה:**  
-    העלאה מקומית היא האפשרות היציבה ביותר.  
-    הורדה מ-YouTube עלולה להיחסם בשרתי ענן.
+    🔹 ניתוח דו־שלבי: וידאו → פריימים → Gemini  
+    🔹 יציב, נתמך API, ומותאם להדרכת שופטים (FIBA)
     """
 )
 
@@ -28,69 +28,81 @@ st.markdown(
 # -------------------------------------------------
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    st.error("❌ חסר API Key של Google Gemini")
+    st.error("❌ חסר API Key של Gemini")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 
 # -------------------------------------------------
-# 📝 Prompt מקצועי
+# 📝 Prompt שיפוטי
 # -------------------------------------------------
 PROMPT = """
-נתח את סרטון הכדורסל המצורף בתור מדריך שופטי כדורסל FIBA.
-התייחס בפירוט ל:
-1. מיקומי שופטים ומכניקה (Lead / Center / Trail)
-2. Primary / Secondary Responsibility
-3. הערכת החלטות (CC / CNC / IC / INC)
-4. דגשים מקצועיים
+אתה מדריך שופטי כדורסל לפי חוקת FIBA.
 
-ציין טיימסטאמפים מדויקים (MM:SS).
-השב בעברית מקצועית.
+לפניך סדרת תמונות (Frames) מאירוע משחק, עם ציון timestamp לכל תמונה.
+
+נתח את האירוע:
+1. מיקום ומכניקת השופטים (Lead / Center / Trail)
+2. אחריות Primary / Secondary
+3. הערכת ההחלטה (CC / CNC / IC / INC)
+4. דגשים מקצועיים לשיפור
+
+התייחס במפורש ל-timestamps.
+השב בעברית מקצועית ותמציתית.
 """
 
 # -------------------------------------------------
-# 🧠 פונקציית ניתוח Gemini (וידאו)
+# 🎞️ חילוץ פריימים מהווידאו
 # -------------------------------------------------
-def analyze_video(video_path: str) -> str | None:
-    uploaded_file = None
-    try:
-        with st.spinner("⬆️ מעלה וידאו ל-Gemini..."):
-            uploaded_file = genai.upload_file(
-                path=video_path,
-                mime_type="video/mp4"
-            )
+def extract_frames(video_path, interval_sec=1.5, max_frames=8):
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
 
-            while uploaded_file.state.name == "PROCESSING":
-                time.sleep(2)
-                uploaded_file = genai.get_file(uploaded_file.name)
+    frames = []
+    count = 0
+    frame_index = 0
 
-            if uploaded_file.state.name == "FAILED":
-                raise RuntimeError("עיבוד הווידאו נכשל ב-Gemini")
+    while cap.isOpened() and len(frames) < max_frames:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-        with st.spinner("🧠 מנתח וידאו..."):
-            model = genai.GenerativeModel("models/gemini-1.5-pro")
-            response = model.generate_content([uploaded_file, PROMPT])
-            return response.text
+        timestamp = frame_index / fps
 
-    except Exception as e:
-        st.error(f"❌ שגיאה בניתוח: {e}")
-        return None
+        if timestamp >= count * interval_sec:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(rgb)
+            frames.append((img, timestamp))
+            count += 1
 
-    finally:
-        if uploaded_file:
-            try:
-                genai.delete_file(uploaded_file.name)
-            except:
-                pass
+        frame_index += 1
+
+    cap.release()
+    return frames
+
+# -------------------------------------------------
+# 🧠 ניתוח Gemini (Images + Text)
+# -------------------------------------------------
+def analyze_frames_with_gemini(frames):
+    model = genai.GenerativeModel("models/gemini-1.5-pro")
+
+    content = [PROMPT]
+
+    for img, ts in frames:
+        content.append(f"Timestamp: {ts:05.2f} seconds")
+        content.append(img)
+
+    response = model.generate_content(content)
+    return response.text
 
 # -------------------------------------------------
 # 🎬 בחירת מקור וידאו
 # -------------------------------------------------
-st.subheader("🎬 מקור הווידאו")
+st.subheader("🎬 מקור וידאו")
 
 source = st.radio(
     "בחר מקור:",
-    ["קישור YouTube", "העלאה מקומית"],
+    ["העלאה מקומית", "קישור YouTube"],
     horizontal=True
 )
 
@@ -98,75 +110,60 @@ video_path = None
 temp_files = []
 
 # -------------------------------------------------
-# 🎥 אפשרות 1 – YouTube
+# 📁 העלאה מקומית
 # -------------------------------------------------
-if source == "קישור YouTube":
-    youtube_url = st.text_input("הזן קישור YouTube")
-
-    if youtube_url and st.button("הורד וידאו"):
-        try:
-            with st.spinner("📥 מוריד מיוטיוב..."):
-                temp_dir = tempfile.gettempdir()
-                filename = f"yt_video_{int(time.time())}"
-                output_path = os.path.join(temp_dir, filename)
-
-                ydl_opts = {
-                    "format": "bestvideo+bestaudio/best",
-                    "merge_output_format": "mp4",
-                    "outtmpl": output_path + ".%(ext)s",
-                    "quiet": True,
-                    "no_warnings": True,
-                }
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(youtube_url, download=True)
-                    video_path = ydl.prepare_filename(info)
-
-            # בדיקת תקינות הקובץ
-            if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) < 1024:
-                st.error(
-                    "❌ ההורדה נכשלה.\n\n"
-                    "ייתכן ש-YouTube חסם הורדה מהשרת.\n"
-                    "**מומלץ להשתמש בהעלאה מקומית.**"
-                )
-                video_path = None
-            else:
-                temp_files.append(video_path)
-                st.success("✅ הורדה הושלמה")
-                st.video(video_path)
-
-        except Exception as e:
-            st.error(f"❌ שגיאה בהורדה: {e}")
-            video_path = None
-
-# -------------------------------------------------
-# 📁 אפשרות 2 – העלאה מקומית
-# -------------------------------------------------
-elif source == "העלאה מקומית":
-    uploaded = st.file_uploader(
-        "העלה קובץ וידאו (MP4 / MOV)",
-        type=["mp4", "mov"]
-    )
-
+if source == "העלאה מקומית":
+    uploaded = st.file_uploader("העלה וידאו (MP4 / MOV)", type=["mp4", "mov"])
     if uploaded:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
             tmp.write(uploaded.read())
             video_path = tmp.name
             temp_files.append(video_path)
+        st.video(video_path)
 
-        if os.path.getsize(video_path) < 1024:
-            st.error("❌ הקובץ ריק או פגום")
-            video_path = None
-        else:
-            st.success("✅ הקובץ הועלה בהצלחה")
+# -------------------------------------------------
+# 🎥 YouTube (אופציונלי)
+# -------------------------------------------------
+if source == "קישור YouTube":
+    url = st.text_input("קישור YouTube")
+    if url and st.button("הורד"):
+        with st.spinner("מוריד מיוטיוב..."):
+            tmpdir = tempfile.gettempdir()
+            out = os.path.join(tmpdir, f"yt_{int(time.time())}")
+            ydl_opts = {
+                "format": "bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+                "outtmpl": out + ".%(ext)s",
+                "quiet": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                video_path = ydl.prepare_filename(info)
+
+        if os.path.exists(video_path) and os.path.getsize(video_path) > 1024:
+            temp_files.append(video_path)
             st.video(video_path)
+        else:
+            st.error("❌ YouTube חסם את ההורדה – השתמש בהעלאה מקומית")
+            video_path = None
 
 # -------------------------------------------------
-# 🏀 ניתוח
+# 🏀 הפעלת ניתוח
 # -------------------------------------------------
-if video_path and st.button("🏀 התחל ניתוח"):
-    result = analyze_video(video_path)
-    if result:
+if video_path and st.button("🏀 נתח אירוע"):
+    with st.spinner("🎞️ מחלץ פריימים..."):
+        frames = extract_frames(video_path)
+
+    if not frames:
+        st.error("❌ לא ניתן לחלץ פריימים מהווידאו")
+    else:
+        st.subheader("🖼️ פריימים שנשלחו לניתוח")
+        for img, ts in frames:
+            st.image(img, caption=f"{ts:05.2f} sec", width=200)
+
+        with st.spinner("🧠 מנתח שיפוטית עם Gemini..."):
+            result = analyze_frames_with_gemini(frames)
+
         st.divider()
         st.subheader("📋 דוח ניתוח שיפוטי")
         st.markdown(result)
