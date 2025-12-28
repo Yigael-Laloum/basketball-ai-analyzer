@@ -9,9 +9,9 @@ import google.generativeai as genai
 st.set_page_config(page_title="ניתוח שיפוט כדורסל - Gemini", page_icon="🏀", layout="wide")
 
 # API Key - השתמש ב-secrets ב-Streamlit Cloud
-GEMINI_API_KEY = st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    st.error("חסר API Key של Google Gemini. הוסף אותו ב-Secrets או כמשתנה סביבה.")
+    st.error("חסר API Key של Google Gemini. הוסף אותו ב-Secrets.")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
@@ -23,35 +23,30 @@ PROMPT = """
 1. מיקומי שופטים ומכניקה (Lead/Center/Trail)
 2. Primary/Secondary אחריות
 3. הערכת החלטה (CC, CNC, IC, INC)
-4. דגשים מקצועיים (מגע רך, Off-the-ball, ניהול ספסל)
+4. דגשים מקצועיים
 ציין טיימסטאמפים מדויקים (MM:SS) לכל אירוע.
-השב בעברית מקצועית בלבד.
+השב בעברית מקצועית.
 """
 
-# פונקציה לניתוח (מתוקנת ל-Streamlit)
 def analyze_basketball_clip(video_path: str, model_name: str = "gemini-2.5-flash"):
     try:
-        with st.spinner("מעלה את הווידאו ל-Gemini..."):
+        with st.spinner("מעלה ל-Gemini..."):
             uploaded_file = genai.upload_file(path=video_path, mime_type="video/mp4")
-
-            # המתנה לעיבוד
-            for _ in range(60):  # timeout ~5 דקות
+            for _ in range(60):
                 if uploaded_file.state.name == "ACTIVE":
                     break
-                if uploaded_file.state.name in ["FAILED", "ERROR"]:
-                    raise RuntimeError("העלאת הווידאו נכשלה")
                 time.sleep(5)
                 uploaded_file = genai.get_file(uploaded_file.name)
             else:
-                raise TimeoutError("העלאת הווידאו לקחה יותר מדי זמן")
+                raise TimeoutError("העלאה לקחה יותר מדי זמן")
 
-        with st.spinner("מנתח את המשחק..."):
+        with st.spinner("מנתח..."):
             model = genai.GenerativeModel(model_name)
             response = model.generate_content([uploaded_file, PROMPT])
             return response.text
 
     except Exception as e:
-        st.error(f"שגיאה בניתוח: {str(e)}")
+        st.error(f"שגיאה: {str(e)}")
         return None
     finally:
         if 'uploaded_file' in locals():
@@ -60,52 +55,36 @@ def analyze_basketball_clip(video_path: str, model_name: str = "gemini-2.5-flash
             except:
                 pass
 
-# ממשק Streamlit
-st.title("🏀 ניתוח שיפוט כדורסל עם Gemini")
-st.markdown("""
-העלה וידאו קצר של משחק כדורסל או הזן קישור מיוטיוב, ובחר מודל.  
-Gemini ינתח את השופטים, המכניקה וההחלטות – כמו דוח FIBA מקצועי!
-""")
-
-# בחירת מקור וידאו
-source = st.radio("מקור הווידאו", ["העלאה מהמחשב", "קישור YouTube"])
+# ממשק
+st.title("🏀 ניתוח שיפוט כדורסל")
+source = st.radio("מקור", ["YouTube URL", "העלאה מקומית"])
 
 video_path = None
 
-if source == "העלאה מהמחשב":
-    uploaded_file = st.file_uploader("העלה וידאו (mp4)", type=["mp4"])
-    if uploaded_file:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            video_path = tmp_file.name
-        st.success("ווידאו הועלה!")
-        st.video(uploaded_file)
+if source == "YouTube URL":
+    url = st.text_input("קישור YouTube")
+    if url and st.button("הורד + נתח"):
+        with st.spinner("מוריד..."):
+            yt = YouTube(url)
+            stream = yt.streams.get_highest_resolution()
+            video_path = stream.download(output_path=tempfile.gettempdir(), filename="clip.mp4")
+        st.success("הורד!")
 
-elif source == "קישור YouTube":
-    url = st.text_input("הזן קישור YouTube")
-    if url and st.button("הורד ונתח"):
-        try:
-            with st.spinner("מוריד מיוטיוב..."):
-                yt = YouTube(url)
-                stream = yt.streams.get_highest_resolution()
-                video_path = stream.download(output_path=tempfile.gettempdir(), filename="game_clip.mp4")
-            st.success("הווידאו הורד!")
-        except Exception as e:
-            st.error(f"שגיאה בהורדה: {str(e)}")
+elif source == "העלאה מקומית":
+    uploaded = st.file_uploader("העלה mp4", type="mp4")
+    if uploaded:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            tmp.write(uploaded.getvalue())
+            video_path = tmp.name
+        st.video(uploaded)
 
-# בחירת מודל
-model_options = ["gemini-2.5-flash", "gemini-2.5-pro"]
-selected_model = st.selectbox("בחר מודל Gemini", model_options, index=0)
+model = st.selectbox("מודל", ["gemini-2.5-flash", "gemini-2.5-pro"])
 
-if video_path and st.button("נתח את המשחק! 🏀"):
-    result = analyze_basketball_clip(video_path, selected_model)
+if video_path and st.button("נתח 🏀"):
+    result = analyze_basketball_clip(video_path, model)
     if result:
-        st.subheader("דוח ניתוח מקצועי")
         st.markdown(result)
-
-    # ניקוי קובץ מקומי
-    if video_path and os.path.exists(video_path):
+    if os.path.exists(video_path):
         os.unlink(video_path)
 
-st.markdown("---")
-st.caption("פותח על ידי Grok & Streamlit | Gemini API | 2025")
+st.caption("Gemini API | Streamlit Cloud | 2025")
