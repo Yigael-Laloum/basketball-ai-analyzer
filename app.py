@@ -65,9 +65,18 @@ if source == "YouTube URL":
     url = st.text_input("קישור YouTube")
     if url and st.button("הורד + נתח"):
         with st.spinner("מוריד..."):
-            yt = YouTube(url)
-            stream = yt.streams.get_highest_resolution()
-            video_path = stream.download(output_path=tempfile.gettempdir(), filename="clip.mp4")
+            import yt_dlp
+
+            ydl_opts = {
+                'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+                'outtmpl': os.path.join(tempfile.gettempdir(), 'clip.mp4'),
+                'quiet': True,
+            }
+
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            video_path = os.path.join(tempfile.gettempdir(), 'clip.mp4')
         st.success("הורד!")
 
 elif source == "העלאה מקומית":
