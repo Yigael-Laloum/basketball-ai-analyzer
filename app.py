@@ -40,7 +40,7 @@ def analyze_basketball_clip(video_path: str, model_name: str):
             if uploaded_file.state.name == "FAILED":
                 raise ValueError("עיבוד הווידאו נכשל בשרתי Gemini.")
 
-        with st.spinner("מנתח..."):
+        with st.spinner("מנתח עם Gemini..."):
             model = genai.GenerativeModel(model_name)
             response = model.generate_content([uploaded_file, PROMPT])
             return response.text
@@ -56,7 +56,9 @@ def analyze_basketball_clip(video_path: str, model_name: str):
                 pass
 
 
-st.title("🏀 ניתוח שיפוט כדורסל")
+# --- ממשק משתמש ---
+st.title("🏀 ניתוח שיפוט כדורסל מקצועי")
+st.markdown("מערכת ניתוח מבוססת AI לפי חוקת FIBA")
 
 source = st.radio("מקור הווידאו", ["YouTube URL", "העלאה מקומית"])
 video_path = None
@@ -65,60 +67,59 @@ if source == "YouTube URL":
     url = st.text_input("הזן קישור YouTube")
     if url and st.button("הורד ונתח"):
         try:
-            with st.spinner("מוריד מיוטיוב..."):
-                # יצירת שם קובץ זמני ייחודי
+            with st.spinner("מוריד מיוטיוב (זה עשוי לקחת רגע)..."):
                 temp_dir = tempfile.gettempdir()
-                video_path = os.path.join(temp_dir, f"video_{int(time.time())}.mp4")
+                # שם קובץ ייחודי כדי למנוע התנגשויות
+                unique_id = int(time.time())
+                save_path = os.path.join(temp_dir, f"yt_video_{unique_id}")
 
                 ydl_opts = {
-                    # מחפש mp4 מוכן, אם אין - לוקח את הכי טוב שיש ומקווה שהוא קובץ אחד
-                    'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
-                    'outtmpl': video_path,
+                    # נסיון להוריד את הקובץ המאוחד הכי טוב (וידאו + אודיו) בפורמט MP4
+                    'format': 'best[ext=mp4]/best',
+                    'outtmpl': save_path + '.%(ext)s',
                     'quiet': True,
                     'no_warnings': True,
-                    # הוספת Headers כדי להיראות כמו דפדפן אמיתי
+                    # התחזות לדפדפן כדי למנוע חסימה
                     'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'nocheckcertificate': True,
                 }
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     info = ydl.extract_info(url, download=True)
-                    # לפעמים הסיומת משתנה בהורדה, נעדכן את הנתיב
-                    actual_filename = ydl.prepare_filename(info)
-                    if os.path.exists(actual_filename):
-                        video_path = actual_filename
+                    video_path = ydl.prepare_filename(info)
 
             if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                 st.video(video_path)
-                st.success("הורדה הושלמה!")
+                st.success(f"הורדה הושלמה! גודל קובץ: {os.path.getsize(video_path) // 1024} KB")
             else:
-                st.error("הקובץ ירד ריק. נסה להעלות את הקובץ ידנית או לבחור סרטון אחר.")
+                st.error("הקובץ ירד ריק או שלא נמצא. יוטיוב עשוי לחסום את השרת.")
                 video_path = None
         except Exception as e:
-            st.error(f"שגיאה בהורדה: {str(e)}")
+            st.error(f"שגיאה בתהליך ההורדה: {str(e)}")
             video_path = None
 
 elif source == "העלאה מקומית":
-    uploaded = st.file_uploader("העלה קובץ", type=["mp4", "mov"])
+    uploaded = st.file_uploader("העלה קובץ וידאו (MP4/MOV)", type=["mp4", "mov"])
     if uploaded:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
             tmp.write(uploaded.getvalue())
             video_path = tmp.name
         st.video(video_path)
 
-model_choice = st.selectbox("בחר מודל", ["gemini-1.5-flash", "gemini-1.5-pro"])
+# בחירת מודל
+model_choice = st.selectbox("בחר מודל Gemini", ["gemini-1.5-flash", "gemini-1.5-pro"])
 
-if video_path and st.button("נתח כעת"):
-    if os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+if video_path and st.button("התחל ניתוח 🏀"):
+    if os.path.getsize(video_path) > 0:
         result = analyze_basketball_clip(video_path, model_choice)
         if result:
+            st.divider()
+            st.subheader("📋 דוח ניתוח מקצועי")
             st.markdown(result)
     else:
-        st.error("לא נמצא קובץ וידאו תקין לניתוח.")
+        st.error("הווידאו ריק, לא ניתן לנתח.")
 
-# ניקוי
+# ניקוי קבצים ישנים בתיקייה הזמנית (אופציונלי)
 if video_path and os.path.exists(video_path):
-    try:
-        # השארתי את הניקוי לסוף הריצה
-        pass
-    except:
-        pass
+    # כאן ניתן להוסיף לוגיקה למחיקה אם רוצים לחסוך מקום בשרת
+    pass
