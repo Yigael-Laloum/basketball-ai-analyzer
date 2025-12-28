@@ -6,18 +6,20 @@ import yt_dlp
 import google.generativeai as genai
 
 # -------------------------------------------------
-# ⚙️ הגדרות כלליות
+# ⚙️ הגדרות עמוד
 # -------------------------------------------------
 st.set_page_config(
     page_title="🏀 ניתוח שיפוט כדורסל – Gemini",
+    page_icon="🏀",
     layout="wide"
 )
 
 st.title("🏀 ניתוח שיפוט כדורסל מקצועי (FIBA)")
 st.markdown(
     """
-    **המלצה:** העלאה מקומית היא האפשרות היציבה ביותר.  
-    YouTube עלול להיחסם בשרתים חיצוניים.
+    **הערה חשובה:**  
+    העלאה מקומית היא האפשרות היציבה ביותר.  
+    הורדה מ-YouTube עלולה להיחסם בשרתי ענן.
     """
 )
 
@@ -26,11 +28,14 @@ st.markdown(
 # -------------------------------------------------
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
-    st.error("❌ חסר API Key של Gemini")
+    st.error("❌ חסר API Key של Google Gemini")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
 
+# -------------------------------------------------
+# 📝 Prompt מקצועי
+# -------------------------------------------------
 PROMPT = """
 נתח את סרטון הכדורסל המצורף בתור מדריך שופטי כדורסל FIBA.
 התייחס בפירוט ל:
@@ -44,9 +49,9 @@ PROMPT = """
 """
 
 # -------------------------------------------------
-# 🧠 פונקציית ניתוח Gemini
+# 🧠 פונקציית ניתוח Gemini (וידאו)
 # -------------------------------------------------
-def analyze_video(video_path: str, model_name: str) -> str | None:
+def analyze_video(video_path: str) -> str | None:
     uploaded_file = None
     try:
         with st.spinner("⬆️ מעלה וידאו ל-Gemini..."):
@@ -60,10 +65,10 @@ def analyze_video(video_path: str, model_name: str) -> str | None:
                 uploaded_file = genai.get_file(uploaded_file.name)
 
             if uploaded_file.state.name == "FAILED":
-                raise RuntimeError("Gemini נכשל בעיבוד הווידאו")
+                raise RuntimeError("עיבוד הווידאו נכשל ב-Gemini")
 
         with st.spinner("🧠 מנתח וידאו..."):
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel("models/gemini-1.5-pro")
             response = model.generate_content([uploaded_file, PROMPT])
             return response.text
 
@@ -72,7 +77,6 @@ def analyze_video(video_path: str, model_name: str) -> str | None:
         return None
 
     finally:
-        # מחיקת הקובץ מ-Gemini
         if uploaded_file:
             try:
                 genai.delete_file(uploaded_file.name)
@@ -94,22 +98,22 @@ video_path = None
 temp_files = []
 
 # -------------------------------------------------
-# 🎥 YouTube
+# 🎥 אפשרות 1 – YouTube
 # -------------------------------------------------
 if source == "קישור YouTube":
-    youtube_url = st.text_input("קישור YouTube")
+    youtube_url = st.text_input("הזן קישור YouTube")
 
     if youtube_url and st.button("הורד וידאו"):
         try:
             with st.spinner("📥 מוריד מיוטיוב..."):
                 temp_dir = tempfile.gettempdir()
-                filename = f"yt_{int(time.time())}"
-                output = os.path.join(temp_dir, filename)
+                filename = f"yt_video_{int(time.time())}"
+                output_path = os.path.join(temp_dir, filename)
 
                 ydl_opts = {
                     "format": "bestvideo+bestaudio/best",
                     "merge_output_format": "mp4",
-                    "outtmpl": output + ".%(ext)s",
+                    "outtmpl": output_path + ".%(ext)s",
                     "quiet": True,
                     "no_warnings": True,
                 }
@@ -118,11 +122,11 @@ if source == "קישור YouTube":
                     info = ydl.extract_info(youtube_url, download=True)
                     video_path = ydl.prepare_filename(info)
 
-            # בדיקת קובץ ריק
+            # בדיקת תקינות הקובץ
             if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) < 1024:
                 st.error(
                     "❌ ההורדה נכשלה.\n\n"
-                    "YouTube כנראה חסם את השרת.\n"
+                    "ייתכן ש-YouTube חסם הורדה מהשרת.\n"
                     "**מומלץ להשתמש בהעלאה מקומית.**"
                 )
                 video_path = None
@@ -136,7 +140,7 @@ if source == "קישור YouTube":
             video_path = None
 
 # -------------------------------------------------
-# 📁 העלאה מקומית
+# 📁 אפשרות 2 – העלאה מקומית
 # -------------------------------------------------
 elif source == "העלאה מקומית":
     uploaded = st.file_uploader(
@@ -158,15 +162,10 @@ elif source == "העלאה מקומית":
             st.video(video_path)
 
 # -------------------------------------------------
-# 🧠 בחירת מודל וניתוח
+# 🏀 ניתוח
 # -------------------------------------------------
-model_choice = st.selectbox(
-    "בחר מודל Gemini",
-    ["gemini-1.5-flash", "gemini-1.5-pro"]
-)
-
 if video_path and st.button("🏀 התחל ניתוח"):
-    result = analyze_video(video_path, model_choice)
+    result = analyze_video(video_path)
     if result:
         st.divider()
         st.subheader("📋 דוח ניתוח שיפוטי")
