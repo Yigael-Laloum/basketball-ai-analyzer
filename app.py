@@ -26,11 +26,28 @@ st.markdown(
 # -------------------------------------------------
 # 🔐 Gemini API
 # -------------------------------------------------
-GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
+GEMI# ניסיון למשוך את המפתח בצורה בטוחה
+GEMINI_API_KEY = None
+
+# 1. בדיקה אם קיים בתוך st.secrets (עבור Streamlit Cloud או secrets.toml מקומי)
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    # אם הקובץ secrets.toml בכלל לא קיים, Streamlit עלול לזרוק שגיאה - נתעלם ונמשיך ל-env
+    pass
+
+# 2. אם לא נמצא ב-secrets, ננסה למשוך ממשתני סביבה (os.getenv)
 if not GEMINI_API_KEY:
-    st.error("❌ חסר API Key של Gemini")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# בדיקה סופית - אם עדיין אין מפתח, נעצור ונציג הודעה ידידותית
+if not GEMINI_API_KEY:
+    st.error("❌ לא נמצא API Key עבור Gemini.")
+    st.info("אנא וודא שהגדרת את GEMINI_API_KEY בקובץ `.streamlit/secrets.toml` או כמשתנה סביבה.")
     st.stop()
 
+# הגדרת ה-Library עם המפתח שנמצא
 genai.configure(api_key=GEMINI_API_KEY)
 
 # -------------------------------------------------
